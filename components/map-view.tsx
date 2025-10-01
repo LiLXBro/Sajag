@@ -6,116 +6,243 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
-import { MapPin, Calendar, Users, X } from "lucide-react"
-import Script from "next/script"
+import { MapPin, Calendar, Users, X, Layers, Satellite, Map as MapIcon } from "lucide-react"
 
-// Bhuvan is loaded from the script tag, so we need to declare it for TypeScript
-declare const Bhuvan: any
+// OpenLayers imports
+import Map from 'ol/Map'
+import View from 'ol/View'
+import TileLayer from 'ol/layer/Tile'
+import VectorLayer from 'ol/layer/Vector'
+import VectorSource from 'ol/source/Vector'
+import OSM from 'ol/source/OSM'
+import XYZ from 'ol/source/XYZ'
+import { Feature } from 'ol'
+import { Point } from 'ol/geom'
+import { fromLonLat } from 'ol/proj'
+import { Style, Circle, Fill, Stroke, Text } from 'ol/style'
+import { Select } from 'ol/interaction'
+import { click } from 'ol/events/condition'
+import { defaults as defaultControls, FullScreen, ZoomToExtent } from 'ol/control'
+import 'ol/ol.css'
 
 interface MapViewProps {
   trainings: TrainingProgram[]
 }
 
+type BaseLayer = 'osm' | 'satellite' | 'terrain'
+
 export function MapView({ trainings }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null)
-  const markersLayerRef = useRef<any>(null) // Use a ref to hold the markers layer
-  const [map, setMap] = useState<any | null>(null)
+  const mapInstanceRef = useRef<Map | null>(null)
+  const vectorSourceRef = useRef<VectorSource | null>(null)
+  const osmLayerRef = useRef<TileLayer<OSM> | null>(null)
+  const satelliteLayerRef = useRef<TileLayer<XYZ> | null>(null)
+  const terrainLayerRef = useRef<TileLayer<XYZ> | null>(null)
+  
   const [selectedTraining, setSelectedTraining] = useState<TrainingProgram | null>(null)
-  const [isBhuvanReady, setIsBhuvanReady] = useState(false)
+  const [currentBaseLayer, setCurrentBaseLayer] = useState<BaseLayer>('osm')
+  const [showLayerControls, setShowLayerControls] = useState(false)
 
-  // --- EFFECT 1: Initialize the map ONCE ---
-  // This effect runs only when the Bhuvan script is ready.
-  // It sets up the map, controls, and base layers.
+  // Initialize the map
   useEffect(() => {
-    if (!isBhuvanReady || !mapRef.current || map) return
+    if (!mapRef.current || mapInstanceRef.current) return
 
-    const bhuvanMap = new Bhuvan.Map(mapRef.current.id, {
-      controls: [
-        new Bhuvan.Control.Navigation(),
-        new Bhuvan.Control.PanZoomBar(),
-        new Bhuvan.Control.LayerSwitcher({ roundedCorner: true }),
-        new Bhuvan.Control.MousePosition(),
-      ],
+    // Create vector source for markers
+    const vectorSource = new VectorSource()
+    vectorSourceRef.current = vectorSource
+
+    // Create base layers
+    const osmLayer = new TileLayer({
+      source: new OSM(),
+      visible: true,
+    })
+    osmLayerRef.current = osmLayer
+
+    const satelliteLayer = new TileLayer({
+      source: new XYZ({
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attributions: 'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+      }),
+      visible: false,
+    })
+    satelliteLayerRef.current = satelliteLayer
+
+    const terrainLayer = new TileLayer({
+      source: new XYZ({
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+        attributions: 'Tiles © Esri — Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community'
+      }),
+      visible: false,
+    })
+    terrainLayerRef.current = terrainLayer
+
+    // Create vector layer for markers
+    const vectorLayer = new VectorLayer({
+      source: vectorSource,
     })
 
-    bhuvanMap.addLayer(new Bhuvan.Layer.BhuvanTile("Bhuvan Satellite", "SATELLITE", true))
-    bhuvanMap.addLayer(new Bhuvan.Layer.BhuvanTile("Bhuvan Street", "STREET", false))
+    // Get map configuration from environment or use defaults
+    const centerLat = Number(process.env.NEXT_PUBLIC_DEFAULT_MAP_CENTER_LAT) || 20.5937
+    const centerLng = Number(process.env.NEXT_PUBLIC_DEFAULT_MAP_CENTER_LNG) || 78.9629
+    const defaultZoom = Number(process.env.NEXT_PUBLIC_DEFAULT_MAP_ZOOM) || 5
 
-    const centerLonLat = new Bhuvan.LonLat(78.9629, 20.5937)
-    const transformedCenter = centerLonLat.transform("EPSG:4326", bhuvanMap.getProjectionObject())
-    bhuvanMap.setCenter(transformedCenter, 5)
+    // Create the map
+    const map = new Map({
+      target: mapRef.current,
+      layers: [osmLayer, satelliteLayer, terrainLayer, vectorLayer],
+      controls: defaultControls().extend([
+        new FullScreen(),
+        new ZoomToExtent({
+          extent: [
+            ...fromLonLat([68.0, 6.0]), // Southwest corner of India
+            ...fromLonLat([97.0, 37.0])  // Northeast corner of India
+          ]
+        })
+      ]),
+      view: new View({
+        center: fromLonLat([centerLng, centerLat]),
+        zoom: defaultZoom,
+        minZoom: 4,
+        maxZoom: 18,
+      }),
+    })
 
-    // Create the vector layer and store it in a ref
-    const markersLayer = new Bhuvan.Layer.Vector("Training Programs")
-    bhuvanMap.addLayer(markersLayer)
-    markersLayerRef.current = markersLayer
+    // Add click interaction for selecting features
+    const selectInteraction = new Select({
+      condition: click,
+      layers: [vectorLayer],
+      style: new Style({
+        image: new Circle({
+          radius: 10,
+          fill: new Fill({
+            color: 'rgba(255, 255, 0, 0.8)',
+          }),
+          stroke: new Stroke({
+            color: '#ffffff',
+            width: 3,
+          }),
+        }),
+      }),
+    })
 
-    // Add a control to handle clicks on the markers
-    const selectControl = new Bhuvan.Control.SelectFeature(markersLayer, {
-      onSelect: (feature: any) => {
-        setSelectedTraining(feature.attributes)
-        bhuvanMap.panTo(feature.geometry.getBounds().getCenterLonLat())
-      },
-      onUnselect: () => {
+    selectInteraction.on('select', (event) => {
+      if (event.selected.length > 0) {
+        const feature = event.selected[0]
+        const trainingData = feature.get('trainingData') as TrainingProgram
+        setSelectedTraining(trainingData)
+        
+        // Center map on selected feature with smooth animation
+        const coordinates = (feature.getGeometry() as Point).getCoordinates()
+        map.getView().animate({
+          center: coordinates,
+          zoom: Math.max(map.getView().getZoom() || 5, 10),
+          duration: 1000,
+        })
+      } else {
         setSelectedTraining(null)
-      },
+      }
     })
-    bhuvanMap.addControl(selectControl)
-    selectControl.activate()
 
-    setMap(bhuvanMap)
+    map.addInteraction(selectInteraction)
+    mapInstanceRef.current = map
 
-    // --- CLEANUP ---
-    // This function runs when the component is unmounted
+    // Cleanup function
     return () => {
-      if (bhuvanMap) {
-        bhuvanMap.destroy()
-        setMap(null)
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.setTarget(undefined)
+        mapInstanceRef.current = null
       }
     }
-  }, [isBhuvanReady]) // Dependency array ensures this runs only once
+  }, [])
 
-  // --- EFFECT 2: Update markers when trainings data changes ---
-  // This effect runs whenever the map is ready or the training data updates.
-  // It clears and re-adds only the markers, without recreating the whole map.
+  // Update markers when trainings data changes
   useEffect(() => {
-    if (!map || !markersLayerRef.current) return
+    if (!vectorSourceRef.current) return
 
-    const layer = markersLayerRef.current
-    layer.removeAllFeatures() // Clear old markers first
+    // Clear existing features
+    vectorSourceRef.current.clear()
 
+    // Add new features
     const features = trainings
-      .map((training) => {
-        if (!training.latitude || !training.longitude) return null
+      .filter(training => training.latitude && training.longitude)
+      .map(training => {
+        const feature = new Feature({
+          geometry: new Point(fromLonLat([training.longitude!, training.latitude!])),
+          trainingData: training,
+        })
 
-        const point = new Bhuvan.Geometry.Point(training.longitude, training.latitude).transform(
-          "EPSG:4326",
-          map.getProjectionObject()
-        )
-        const feature = new Bhuvan.Feature.Vector(point, training)
-        feature.style = {
-          fillColor: getMarkerColor(training.status),
-          fillOpacity: 0.8,
-          strokeColor: "#ffffff",
-          strokeWidth: 2,
-          pointRadius: 8,
-        }
+        // Set marker style based on status
+        feature.setStyle(new Style({
+          image: new Circle({
+            radius: 10,
+            fill: new Fill({
+              color: getMarkerColor(training.status),
+            }),
+            stroke: new Stroke({
+              color: '#ffffff',
+              width: 2,
+            }),
+          }),
+          text: new Text({
+            text: training.actual_participants.toString(),
+            fill: new Fill({
+              color: '#ffffff',
+            }),
+            font: 'bold 12px Arial',
+          }),
+        }))
+
         return feature
       })
-      .filter(Boolean) as any[]
 
     if (features.length > 0) {
-      layer.addFeatures(features)
+      vectorSourceRef.current.addFeatures(features)
+      
+      // Fit map to show all markers with padding
+      if (mapInstanceRef.current && features.length > 1) {
+        const extent = vectorSourceRef.current.getExtent()
+        mapInstanceRef.current.getView().fit(extent, {
+          padding: [80, 80, 80, 80],
+          maxZoom: 12,
+          duration: 1000,
+        })
+      }
     }
-  }, [map, trainings]) // Reruns only when map or trainings change
+  }, [trainings])
+
+  // Switch base layer
+  const switchBaseLayer = (layerType: BaseLayer) => {
+    if (!osmLayerRef.current || !satelliteLayerRef.current || !terrainLayerRef.current) return
+
+    // Hide all layers
+    osmLayerRef.current.setVisible(false)
+    satelliteLayerRef.current.setVisible(false)
+    terrainLayerRef.current.setVisible(false)
+
+    // Show selected layer
+    switch (layerType) {
+      case 'osm':
+        osmLayerRef.current.setVisible(true)
+        break
+      case 'satellite':
+        satelliteLayerRef.current.setVisible(true)
+        break
+      case 'terrain':
+        terrainLayerRef.current.setVisible(true)
+        break
+    }
+
+    setCurrentBaseLayer(layerType)
+    setShowLayerControls(false)
+  }
 
   const getMarkerColor = (status: string) => {
     switch (status) {
-      case "ongoing": return "#22c55e"
-      case "planned": return "#3b82f6"
-      case "completed": return "#6b7280"
-      case "cancelled": return "#ef4444"
-      default: return "#6b7280"
+      case "ongoing": return "rgba(34, 197, 94, 0.9)"
+      case "planned": return "rgba(59, 130, 246, 0.9)"
+      case "completed": return "rgba(107, 114, 128, 0.9)"
+      case "cancelled": return "rgba(239, 68, 68, 0.9)"
+      default: return "rgba(107, 114, 128, 0.9)"
     }
   }
 
@@ -129,9 +256,68 @@ export function MapView({ trainings }: MapViewProps) {
     }
   }
 
+  const getLayerIcon = (layerType: BaseLayer) => {
+    switch (layerType) {
+      case 'satellite': return <Satellite className="h-4 w-4" />
+      case 'terrain': return <MapIcon className="h-4 w-4" />
+      default: return <Layers className="h-4 w-4" />
+    }
+  }
+
   return (
     <div className="relative h-full w-full">
-      <div ref={mapRef} id="bhuvan-map-container" className="h-full w-full" />
+      <div ref={mapRef} className="h-full w-full" />
+
+      {/* Layer Control */}
+      <div className="absolute left-4 bottom-4">
+        <div className="relative">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowLayerControls(!showLayerControls)}
+            className="shadow-lg"
+          >
+            {getLayerIcon(currentBaseLayer)}
+            <span className="ml-2">Layers</span>
+          </Button>
+          
+          {showLayerControls && (
+            <Card className="absolute bottom-full mb-2 w-48 shadow-lg">
+              <CardContent className="p-2">
+                <div className="space-y-1">
+                  <Button
+                    variant={currentBaseLayer === 'osm' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => switchBaseLayer('osm')}
+                    className="w-full justify-start"
+                  >
+                    <Layers className="h-4 w-4 mr-2" />
+                    OpenStreetMap
+                  </Button>
+                  <Button
+                    variant={currentBaseLayer === 'satellite' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => switchBaseLayer('satellite')}
+                    className="w-full justify-start"
+                  >
+                    <Satellite className="h-4 w-4 mr-2" />
+                    Satellite
+                  </Button>
+                  <Button
+                    variant={currentBaseLayer === 'terrain' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => switchBaseLayer('terrain')}
+                    className="w-full justify-start"
+                  >
+                    <MapIcon className="h-4 w-4 mr-2" />
+                    Terrain
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
 
       {/* Legend Card */}
       <Card className="absolute left-4 top-4 w-64 shadow-lg">
@@ -141,19 +327,22 @@ export function MapView({ trainings }: MapViewProps) {
         <CardContent className="space-y-2">
           <div className="flex items-center gap-2 text-sm">
             <div className="h-3 w-3 rounded-full bg-green-500" />
-            <span>Ongoing</span>
+            <span>Ongoing Training</span>
           </div>
           <div className="flex items-center gap-2 text-sm">
             <div className="h-3 w-3 rounded-full bg-blue-500" />
-            <span>Planned</span>
+            <span>Planned Training</span>
           </div>
           <div className="flex items-center gap-2 text-sm">
             <div className="h-3 w-3 rounded-full bg-gray-500" />
-            <span>Completed</span>
+            <span>Completed Training</span>
           </div>
           <div className="flex items-center gap-2 text-sm">
             <div className="h-3 w-3 rounded-full bg-red-500" />
-            <span>Cancelled</span>
+            <span>Cancelled Training</span>
+          </div>
+          <div className="text-xs text-gray-500 pt-2 border-t">
+            Numbers on markers show participant count
           </div>
         </CardContent>
       </Card>
@@ -196,6 +385,14 @@ export function MapView({ trainings }: MapViewProps) {
                 </Badge>
               ))}
             </div>
+            <div className="text-sm text-gray-600">
+              <strong>Organizing Body:</strong> {selectedTraining.organizing_body}
+            </div>
+            {selectedTraining.budget && (
+              <div className="text-sm text-gray-600">
+                <strong>Budget:</strong> ₹{selectedTraining.budget.toLocaleString()}
+              </div>
+            )}
             <Button asChild className="w-full" size="sm">
               <Link href={`/dashboard/trainings/${selectedTraining.id}`}>View Full Details</Link>
             </Button>
@@ -203,39 +400,51 @@ export function MapView({ trainings }: MapViewProps) {
         </Card>
       )}
 
-      {/* Stats Summary Card */}
-      <Card className="absolute right-4 top-4 w-64 shadow-lg">
+      {/* Enhanced Stats Summary Card */}
+      <Card className="absolute right-4 top-4 w-80 shadow-lg">
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Summary</CardTitle>
+          <CardTitle className="text-sm">Training Programs Summary</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span className="text-gray-600">Total Programs:</span>
-            <span className="font-semibold">{trainings.length}</span>
+        <CardContent className="space-y-3 text-sm">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="text-center p-2 bg-gray-50 rounded">
+              <div className="text-2xl font-bold">{trainings.length}</div>
+              <div className="text-xs text-gray-600">Total Programs</div>
+            </div>
+            <div className="text-center p-2 bg-green-50 rounded">
+              <div className="text-2xl font-bold text-green-600">
+                {trainings.filter((t) => t.status === "ongoing").length}
+              </div>
+              <div className="text-xs text-gray-600">Ongoing</div>
+            </div>
           </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Ongoing:</span>
-            <span className="font-semibold text-green-600">
-              {trainings.filter((t) => t.status === "ongoing").length}
-            </span>
+          
+          <div className="space-y-2">
+            <div className="flex justify-between">
+              <span className="text-gray-600">Planned:</span>
+              <span className="font-semibold text-blue-600">
+                {trainings.filter((t) => t.status === "planned").length}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">Completed:</span>
+              <span className="font-semibold text-gray-600">
+                {trainings.filter((t) => t.status === "completed").length}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">Total Participants:</span>
+              <span className="font-semibold">
+                {trainings.reduce((sum, t) => sum + t.actual_participants, 0)}
+              </span>
+            </div>
           </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Planned:</span>
-            <span className="font-semibold text-blue-600">
-              {trainings.filter((t) => t.status === "planned").length}
-            </span>
+          
+          <div className="pt-2 border-t text-xs text-gray-500">
+            Click on markers to view training details
           </div>
         </CardContent>
       </Card>
-
-      {/* Bhuvan Maps Script */}
-      <Script
-        src="https://bhuvan-api1.nrsc.gov.in/api/js/bhuvan-api.js"
-        strategy="afterInteractive"
-        onLoad={() => {
-          setIsBhuvanReady(true)
-        }}
-      />
     </div>
   )
 }

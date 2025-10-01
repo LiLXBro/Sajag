@@ -1,0 +1,91 @@
+erDiagram
+    Organizations ||--o{ Training_Programs : creates
+    Organizations ||--o{ Users : has
+    Organizations {
+        int org_id PK
+        string name
+        string type
+        string location
+    }
+    
+    Training_Programs ||--o{ Training_Sessions : has
+    Training_Programs ||--o{ Locations : conducted_at
+    Training_Programs {
+        int prog_id PK
+        int org_id FK
+        string prog_name
+        string description
+        int duration
+        string risk_type
+        string req_id FK
+    }
+    
+    Training_Sessions ||--o{ Enrollments : has
+    Training_Sessions {
+        int session_id PK
+        int prog_id FK
+        datetime start_date
+        datetime end_date
+        int trainer_id FK
+        string venue
+        int capacity
+    }
+    
+    Users ||--o{ Enrollments : enrolls
+    Users ||--o{ Training_Sessions : trains
+    Users ||--o{ Attendance_Records : marks
+    Users {
+        int user_id PK
+        int org_id FK
+        string name
+        string email
+        string phone
+        string role
+        string district
+        int trained_at FK
+    }
+    
+    Locations {
+        int loc_id PK
+        int prog_id FK
+        string location
+        string venue
+        geometry coordinates
+        string description
+    }
+    
+    Enrollments ||--o{ Attendance_Records : tracks
+    Enrollments ||--o| Feedback : provides
+    Enrollments {
+        int enroll_id PK
+        int session_id FK
+        int user_id FK
+        datetime enrolled_at
+        string status
+    }
+    
+    Attendance_Records {
+        int attend_id PK
+        int enroll_id FK
+        int user_id FK
+        date date
+        string status
+        string marked_by FK
+    }
+    
+    Feedback ||--o| Analytics_Events : generates
+    Feedback {
+        int feedback_id PK
+        int enroll_id FK
+        int rating
+        string comments
+        datetime created_at
+    }
+    
+    Analytics_Events {
+        int event_id PK
+        int user_id FK
+        string event_type
+        json event_data
+        datetime timestamp
+    }

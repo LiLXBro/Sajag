@@ -1,0 +1,84 @@
+flowchart TB
+    subgraph External["External Layer"]
+        MP[Mobile Phone]
+        WB[Web Base]
+        WA[Web App]
+    end
+    
+    subgraph Gateway["Gateway Layer"]
+        LB[Load Balancer]
+        MON[Monitoring]
+    end
+    
+    subgraph API["API Layer"]
+        APIGW[API Gateway]
+        AS[Auth & Security]
+    end
+    
+    subgraph Services["Microservices Layer"]
+        TM[Training Mgmt]
+        UM[User Mgmt]
+        AN[Analytics]
+        NT[Notification]
+        GS[GIS Service]
+        RP[Reporting]
+    end
+    
+    subgraph Queue["Message Queue"]
+        MQ[Message Queue]
+    end
+    
+    subgraph Data["Data Layer"]
+        PG[(PostgreSQL)]
+        CH[(ClickHouse)]
+        PGIS[(PostGIS)]
+        S3[(S3 Storage)]
+    end
+    
+    subgraph ExtSys["External Systems"]
+        NDMA[NDMA APIs]
+        SDMA[State SDMAs]
+        GOV[Govt APIs]
+        SMS[SMS/Email Gateway]
+    end
+    
+    MP --> LB
+    WB --> LB
+    WA --> LB
+    
+    LB --> APIGW
+    MON -.-> APIGW
+    MON -.-> Services
+    
+    APIGW --> AS
+    AS --> TM
+    AS --> UM
+    AS --> AN
+    AS --> NT
+    AS --> GS
+    AS --> RP
+    
+    TM --> MQ
+    UM --> MQ
+    AN --> MQ
+    NT --> MQ
+    GS --> MQ
+    RP --> MQ
+    
+    MQ --> PG
+    MQ --> CH
+    MQ --> PGIS
+    MQ --> S3
+    
+    TM --> NDMA
+    AN --> SDMA
+    UM --> GOV
+    NT --> SMS
+    
+    style External fill:#e1f5ff
+    style Gateway fill:#fff4e1
+    style API fill:#ffe1f5
+    style Services fill:#e1ffe1
+    style Queue fill:#f5e1ff
+    style Data fill:#ffe1e1
+    style ExtSys fill:#fff9e1
